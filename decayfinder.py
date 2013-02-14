@@ -40,16 +40,16 @@ main.add_module(evtgeninput)
 main.add_module(progress)
 main.add_module(gearbox)
 
-# # c++ module attempt
-# from descriptor import decode, to_json
-# analysis = register_module('DecayFinder')
-# analysis.param('pattern', to_json(decode('B0 => X- (e+ || mu+) (nu_e || nu_mu)')))
-# main.add_module(analysis)
+# c++ module attempt
+from descriptor import decode, to_json
+analysis = register_module('DecayFinder')
+analysis.param('pattern', to_json(decode('B0 => X- (e+ || mu+) (nu_e || nu_mu)')))
+main.add_module(analysis)
 
-from decay_filter import DecayFilterModule
-filter = DecayFilterModule()
-# filter.set_decay('B0 -> (D*- -> D- pi0) e+ nu_e')
-filter.set_decay('B0 --> X- [e+,mu+,tau+] [nu_e, nu_mu, nu_tau] ...')
-main.add_module(filter)
+# from decay_filter import DecayFilterModule
+# filter = DecayFilterModule()
+# # filter.set_decay('B0 -> (D*- -> D- pi0) e+ nu_e')
+# filter.set_decay('B0 --> X- [e+,mu+,tau+] [nu_e, nu_mu, nu_tau] ...')
+# main.add_module(filter)
 
 process(main)
