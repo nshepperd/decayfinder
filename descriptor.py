@@ -1,6 +1,6 @@
 #!/usr/bin/env python2
 # encoding: utf-8
-from collections import namedtuple
+# from collections import namedtuple
 from pyparsing import Word, Regex, Or, Literal
 from pyparsing import Optional, OneOrMore, ZeroOrMore, Forward
 from pyparsing import Group, Suppress
@@ -13,8 +13,8 @@ from pyparsing import Group, Suppress
 # exit()
 
 pname_letters = r'[a-zA-Z0-9/*+_\-]'
-pname_resonance = r'(?:\({letters}+\))'.format(letters=pname_letters)
-pname = Regex(r'[a-zA-Z]{letters}*{resonance}?'.format(letters=pname_letters, resonance=pname_resonance))
+pname_resonance = r'(?:\(%s+\))' % pname_letters
+pname = Regex(r'[a-zA-Z]%s*%s?' % (pname_letters, pname_resonance))
 
 # pname = Or([Literal(name) for name in names])
 
@@ -38,6 +38,7 @@ top = (atomic
        ^ (expression + operator + expression)
        ^ (Literal('[') + expression + ZeroOrMore(Suppress(",") + expression) + Literal(']')))
 
+from namedtuple import namedtuple
 AtomicDescriptor = namedtuple('AtomicDescriptor', ['name'])
 DecayDescriptor = namedtuple('DecayDescriptor', ['origin', 'decays', 'arrow', 'inclusive'])
 LogicalDescriptor = namedtuple('LogicalDescriptor', ['op', 'left', 'right'])
@@ -96,7 +97,7 @@ def _to_json(desc):
         raise ValueError("Not a descriptor.")
 
 def to_json(desc):
-    import json
+    import simplejson as json
     return json.dumps(_to_json(desc))
 
-# print decode("(B0 -> X+ X- ...) || (B0 -> D*0_bar ...)")
+# print to_json(decode("(B0 -> X+ X- ...) || (B0 -> D*0_bar ...)"))

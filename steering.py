@@ -6,11 +6,10 @@ import sys
 if len(sys.argv) != 3:
     # the program name and the two arguments
     # stop the program and print an error message
-    sys.exit('usage: {} <output root filename> <number of events>'.format(sys.argv[0]))
+    sys.exit('usage: %s <output root filename> <number of events>' % sys.argv[0])
 
 import os, sys
 from basf2 import *
-from collections import namedtuple
 
 rootFileName = sys.argv[1]
 nOfEvents = int(sys.argv[2])
