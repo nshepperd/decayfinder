@@ -23,19 +23,19 @@ def print_tree(mcparticles, i=0, level=0):
         name = 'unknown'
 
     if 0 < level < 7:
-        prefix = '\033[3{}m'.format(level)
+        prefix = '\033[3' + str(level) + 'm'
         suffix = '\033[m'
     else:
         prefix = ''
         suffix = ''
-    print '    ' * level, prefix + '[{}] {} mass={} energy={} charge={}'.format(pid, name, mass, energy, charge) + suffix
+    print '    ' * level, prefix + '[%i] %s mass=%f energy=%f charge=%f' % (pid, name, mass, energy, charge) + suffix
     if p.getFirstDaughter() > 0:
         m = p.getFirstDaughter()
         n = p.getLastDaughter()
         for j in range(m-1, n):
             print_tree(mcparticles, j, level + 1)
 
-def recursive_matching(left, right, edges, inclusive=set()):
+def recursive_matching(left, right, edges):
     """
     The problem of matching up mcparticle children to the decay descriptor tree
     is actually the 'Bipartite Graph Matching' problem. `left` and `right`
@@ -56,9 +56,9 @@ def recursive_matching(left, right, edges, inclusive=set()):
     That is, all valid ways of matching the monte carlo children to the decay descriptor.
     """
     # Normally, require a bijection.
-    if (not left.difference(inclusive)) and (not right):
+    if (not left) and (not right):
         # Everything that needs to be is matched.
-        yield set()
+        yield []
         return
     if not edges:
         # Something is unmatched, and we're out of free edges.
@@ -68,12 +68,12 @@ def recursive_matching(left, right, edges, inclusive=set()):
     while incompatible:
         (i, j) = incompatible.pop()
         new_left = left.copy()
-        new_left.remove(i)
+        new_left.discard(i)
         new_right = right.copy()
-        new_right.remove(j)
-        new_edges = {(x, y) for (x, y) in edges if (x != i) and (y != j)}
-        for matching in recursive_matching(new_left, new_right, new_edges, inclusive):
-            yield matching.union({(i, j)})
+        new_right.discard(j)
+        new_edges = [(x, y) for (x, y) in edges if (x != i) and (y != j)]
+        for matching in recursive_matching(new_left, new_right, new_edges):
+            yield matching + [(i, j)]
         incompatible = [(x, y) for (x, y) in incompatible if (x == i) or (y == j)]
 
 def long_matching(left, right, edges, relatives):
@@ -93,7 +93,7 @@ def long_matching(left, right, edges, relatives):
         new_left.difference_update(relatives[i])
         new_right = right.copy()
         new_right.remove(j)
-        new_edges = {(x, y) for (x, y) in edges if (x not in relatives[i]) and (y != j)}
+        new_edges = [(x, y) for (x, y) in edges if (x not in relatives[i]) and (y != j)]
         for matching in long_matching(new_left, new_right, new_edges, relatives):
             yield matching + [(i, j)]
         incompatible = [(x, y) for (x, y) in incompatible if (x in relatives[i]) or (y == j)]
@@ -121,6 +121,17 @@ def match_atomic(particle, descriptor):
     return (PDB.GetParticle(descriptor.name)
             and PDB.GetParticle(descriptor.name).PdgCode() == particle.getPDG())
 
+
+def get_mcp_children(particle):
+    first = particle.getFirstDaughter()
+    last = particle.getLastDaughter()
+    if first > 0:
+        # Child indices in normal array (starting at 0) indexing.
+        return list(range(first - 1, last))
+    else:
+        return []    
+    
+
 def match_decay(mcparticles, index, descriptor):
     """
     Does the decay of mcparticles[index] match the descriptor?
@@ -129,94 +140,77 @@ def match_decay(mcparticles, index, descriptor):
         # Match the left hand side.
         return False
 
-    first = mcparticles[index].getFirstDaughter()
-    last = mcparticles[index].getLastDaughter()
-    if first > 0:
-        # Child indices in normal array (starting at 0) indexing.
-        mcp_decays = list(range(first - 1, last))
-        num_mcp = len(mcp_decays)
+    if descriptor.arrow in ('->', '=>'):
+        # Direct decay.
+        mcp_children = get_mcp_children(mcparticles[index])
+        mcp_num = len(mcp_children)
+        mcp_items = range(mcp_num)
+
+        if descriptor.inclusive:
+            # Can have extra monte carlo decay products.
+            # That is, none of the monte carlo are 'required' to be matched.
+            left = set()
+        elif descriptor.arrow == '=>':
+            # Can have extra monte carlo gammas.
+            # 22 is the PDG code for a photon
+            left = set(i for i in mcp_items if mcparticles[mcp_children[i]].getPDG() != 22)
+        else:
+            left = set(mcp_items)
+
+        desc_num = len(descriptor.decays)
+        desc_items = range(desc_num)
+        right = set(desc_items)
+
+        # basic requirement
+        if not (len(left) <= desc_num <= mcp_num):
+            return False
+
+        # Find a way of matching up the mcparticle children to the decay descriptor tree.
+        edges = [(i, j) for i in mcp_items for j in desc_items
+                 if match(mcparticles, mcp_children[i], descriptor.decays[j])]
+        return nonempty(recursive_matching(left, right, edges))
     else:
-        mcp_decays = []
-        num_mcp = 0
+        # Long decay (--> or ==>).
+        mcp_children = get_mcp_children(mcparticles[index])
 
-    if descriptor.inclusive:
-        inclusion = 'all'
-    elif descriptor.arrow in ('=>', '==>'):
-        inclusion = 'gamma'
-    else:
-        inclusion = 'none'
+        # Add descendants of our mcp children, and calculate relatives.
+        ancestors = [[] for _ in range(len(mcp_children))]
+        descendants = [[] for _ in range(len(mcp_children))]        
+        i = 0
+        while i < len(mcp_children):
+            index = mcp_children[i]
+            this_children = get_mcp_children(mcparticles[index])
+            if this_children:
+                start = len(mcp_children)
+                mcp_children.extend(this_children)
+                # ...and update everyone's relatives.
+                for j in range(start, len(mcp_children)):
+                    ancestors.append(ancestors[i] + [i])
+                    for k in ancestors[j]:
+                        descendants[k].append(j)
+                    descendants.append([])
+            i += 1
+        relatives = [ancestors[i] + [i] + descendants[i] for i in range(len(mcp_children))]
+                
+        mcp_num = len(mcp_children)
+        mcp_items = range(mcp_num)
 
-    if descriptor.arrow in ('-->', '==>'):
-        return long_decay(mcparticles, mcp_decays, descriptor.decays, inclusion)
+        if descriptor.inclusive:
+            left = set()
+        elif descriptor.arrow == '=>':
+            left = set(i for i in mcp_items if mcparticles[mcp_children[i]].getPDG() != 22)
+        else:
+            left = set(mcp_items)
 
-    if inclusion == 'all':
-        # Can have extra monte carlo decay products.
-        # That is, any decay products are allowed to be unmatched.
-        inclusive = set(range(num_mcp))
-    elif inclusion == 'gamma':
-        # Can have extra monte carlo gammas.
-        # 22 is the PDG code for a photon
-        inclusive = set(i for i in range(num_mcp)
-                        if mcparticles[mcp_decays[i]].getPDG() == 22)
-    else:
-        inclusive = set()
+        desc_num = len(descriptor.decays)
+        desc_items = range(desc_num)
+        right = set(desc_items)
 
-    num_desc = len(descriptor.decays)
-    if not (num_mcp - len(inclusive) <= num_desc <= num_mcp):
-        return False
+        # Find a way of matching up the mcparticle children to the decay descriptor tree.
+        edges = [(i, j) for i in mcp_items for j in desc_items
+                 if match(mcparticles, mcp_children[i], descriptor.decays[j])]
+        return nonempty(long_matching(left, right, edges, relatives))
 
-    # Find a way of matching up the mcparticle children to the decay descriptor tree.
-    edges = {(i, j) for i in range(num_mcp)
-                    for j in range(num_desc)
-                    if match(mcparticles, mcp_decays[i], descriptor.decays[j])}
-    return nonempty(recursive_matching(set(range(num_mcp)), set(range(num_desc)), edges, inclusive))
-
-def long_decay(mcparticles, mcp_decays, desc_decays, inclusion):
-    descendants = {i : [] for i in range(len(mcp_decays))}
-    ancestors = {i : [] for i in range(len(mcp_decays))}
-
-    # we're going to do the match all at once on the decay tree
-    i = 0
-    while i < len(mcp_decays):
-        index = mcp_decays[i]
-        first = mcparticles[index].getFirstDaughter()
-        if first > 0:
-            start = len(mcp_decays)
-            # Has children, so let's expand!
-            last = mcparticles[index].getLastDaughter()
-            thischildren = list(range(first - 1, last))
-
-            # Add the children to the end...
-            mcp_decays.extend(thischildren)
-
-            # ...and update everyone's relatives.
-            for j in range(start, start + len(thischildren)):
-                ancestors[j] = ancestors[i] + [i]
-                for k in ancestors[j]:
-                    descendants[k].append(j)
-                descendants[j] = []
-        i += 1
-
-    relatives = {i : [i] + descendants[i] + ancestors[i] for i in range(len(mcp_decays))}
-
-    if inclusion == 'all':
-        # Can have extra monte carlo decay products.
-        # That is, none of the monte carlo are 'required' to be matched.
-        left = set()
-    elif inclusion == 'gamma':
-        # Can have extra monte carlo gammas.
-        # 22 is the PDG code for a photon
-        left = set(i for i in range(len(mcp_decays)) if mcparticles[mcp_decays[i]].getPDG() != 22)
-    else:
-        left = set(range(len(mcp_decays)))
-
-    right = set(range(len(desc_decays)))
-
-    edges = {(i, j) for i in range(len(mcp_decays))
-                    for j in range(len(desc_decays))
-                    if match(mcparticles, mcp_decays[i], desc_decays[j])}
-
-    return nonempty(long_matching(left, right, edges, relatives))
 
 def match_logical(mcparticles, index, descriptor):
     if descriptor.op == '||':
@@ -225,6 +219,12 @@ def match_logical(mcparticles, index, descriptor):
         return match(mcparticles, index, descriptor.left) and match(mcparticles, index, descriptor.right)
     else:
         raise ValueError("Unknown logical operator '{}'.".format(descriptor.op))
+
+def any(iterable):
+    for item in iterable:
+        if item:
+            return True
+    return False
 
 def match_list(mcparticles, index, descriptor):
     return any(match(mcparticles, index, d) for d in descriptor.items)
